@@ -38,5 +38,6 @@
   "item.lantern-in-storm.flashlight": "琪露诺玩偶",
   "itemGroup.lantern-in-storm": "风暴中的灯笼",
   "tag.block.lantern-in-storm.spirit_lantern": "灵灯",
-  "tag.item.lantern-in-storm.talisman_plants": "护符植物"
+  "tag.item.lantern-in-storm.talisman_plants": "护符植物",
+  "messages.lantern-in-storm.mythic_lamps_only": "这个维度只能新放置神话金属灯"
 }

@@ -38,5 +38,6 @@
   "item.lantern-in-storm.flashlight": "Cirno Talisman",
   "itemGroup.lantern-in-storm": "Lantern in Storm",
   "tag.block.lantern-in-storm.spirit_lantern": "Spirit lanterns",
-  "tag.item.lantern-in-storm.talisman_plants": "Talisman plants"
+  "tag.item.lantern-in-storm.talisman_plants": "Talisman plants",
+  "messages.lantern-in-storm.mythic_lamps_only": "Only Mythic Metals lanterns can be placed in this dimension"
 }

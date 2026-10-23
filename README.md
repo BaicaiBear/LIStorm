@@ -1,6 +1,6 @@
 # Lantern in Storm · 26.1.2
 
-把 Lantern in Storm、本地 Spirit in Storm 2.0.1、AnnoyingEffects ui 1.2.2 的内容合并到一个 Fabric 模组。当前版本 `6.0.0-alpha.1+26.1.2`，供新世界集成测试。与 StarryTrees 无关，不提供旧存档转换。
+把 Lantern in Storm、本地 Spirit in Storm 2.0.1、AnnoyingEffects ui 1.2.2 的内容合并到一个 Fabric 模组。当前版本 `6.0.0-alpha.2+26.1.2`，供新世界集成测试。与 StarryTrees 无关，不提供旧存档转换。
 
 ## 内容
 
@@ -26,6 +26,10 @@
 三个原内容模组已合入本项目，不要再同时安装旧 JAR。第三方依赖单独安装，不嵌入内容 JAR。Farmer’s Delight、Biomes O’ Plenty 和 Mythic Metals 为可选模组；缺少材料模组时，其配方不加载，相关灯使用原版材质回退。
 
 护符和手电可佩戴于 Trinkets 的 `offhand/glove` 槽，也可持在主手/副手。佩戴物死亡保留。效果配置首次启动生成于 `config/AnnoyingEffects.json`，修改后重启生效，缺失字段补默认值。玩家次数与入梦点保存于世界内 `lantern-in-storm/players/<UUID>.json`。
+
+## 维度放置规则
+
+`mirrortree:bedroom` 和 `starryskies` 命名空间的维度只能新放置四种神话金属灯：迈达斯金、墨菱石、星辰、钷。其他本模组灯具放置会被拒绝且不消耗物品；已有灯具保留。此规则不限制其他种类的方块。
 
 ## 测试技能数据包
 

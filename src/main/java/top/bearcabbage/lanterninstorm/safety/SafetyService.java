@@ -52,8 +52,11 @@ public final class SafetyService {
         state.cleared = false;
       } else {
         boolean flashlight = stack.is(StormContent.FLASHLIGHT);
-        if (!state.cleared) state.cleared = clear(player, stack, vanilla && flashlight);
         boolean exhausted = stack.getDamageValue() >= stack.getMaxDamage() - 1;
+        // A depleted doll still occupies its slot, but must not cleanse nightmare effects.
+        // Keep the vanilla-dimension exemption: dolls there work without consuming charge.
+        if (!state.cleared && (!flashlight || vanilla || !exhausted))
+          state.cleared = clear(player, stack, vanilla && flashlight);
         if (!flashlight || (!vanilla && !exhausted))
           stack.hurtAndBreak(1, player.level(), player, i -> {});
         if (!vanilla && (!flashlight || exhausted)) {

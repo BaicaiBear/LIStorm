@@ -225,6 +225,47 @@ public final class StormGameTest implements FabricClientGameTest {
                 check(
                     player.hasEffect(AnnoyingEffects.TANGLING_DREAMS),
                     "exhausted flashlight permits weak nightmare");
+                var dreams = player.getEffect(AnnoyingEffects.TANGLING_DREAMS);
+                player.addEffect(
+                    new MobEffectInstance(
+                        net.minecraft.world.effect.MobEffects.SLOWNESS, 200));
+                state.cleared = false;
+                for (int second = 0; second < 5; second++) {
+                  state.tick = 19;
+                  SafetyService.tick(player);
+                  check(
+                      player.hasEffect(net.minecraft.world.effect.MobEffects.SLOWNESS),
+                      "exhausted doll does not erase nightmare debuffs on subsequent seconds");
+                  check(
+                      player.getEffect(AnnoyingEffects.TANGLING_DREAMS) == dreams,
+                      "exhausted doll refreshes dreams without removing the existing instance");
+                }
+                flashlight.setDamageValue(100);
+                state.tick = 19;
+                SafetyService.tick(player);
+                check(
+                    !player.hasEffect(net.minecraft.world.effect.MobEffects.SLOWNESS),
+                    "recharged doll regains cleansing");
+                // Even an exhausted doll remains effective in vanilla dimensions.
+                flashlight.setDamageValue(flashlight.getMaxDamage() - 1);
+                player.teleportTo(
+                    level,
+                    pos.getX() + 32.5,
+                    pos.getY() + .5,
+                    pos.getZ() + .5,
+                    Set.of(),
+                    0,
+                    0,
+                    false);
+                state.cleared = false;
+                state.tick = 19;
+                player.addEffect(
+                    new MobEffectInstance(net.minecraft.world.effect.MobEffects.POISON, 200));
+                SafetyService.tick(player);
+                check(
+                    !player.hasEffect(net.minecraft.world.effect.MobEffects.POISON),
+                    "vanilla exhausted doll keeps free cleansing");
+                verifyLampPlacement(player);
                 player.removeAllEffects();
                 glove.set(ItemStack.EMPTY);
                 player.teleportTo(
@@ -331,6 +372,80 @@ public final class StormGameTest implements FabricClientGameTest {
                 check(state.count("biome", "test:biome") == 1, "biome progress survives restart");
                 check(state.spawn != null, "origin survives restart");
               });
+    }
+  }
+
+  private static void verifyLampPlacement(net.minecraft.server.level.ServerPlayer player) {
+    var originalHand = player.getMainHandItem();
+    Set<String> metal =
+        Set.of("midas_gold_lantern", "morkite_lantern", "starrite_lantern", "prometheum_lantern");
+    try {
+      for (String dimension :
+          List.of("mirrortree:bedroom", "starryskies:placement_test", "storm_test:nightmare")) {
+        var key =
+            net.minecraft.resources.ResourceKey.create(
+                net.minecraft.core.registries.Registries.DIMENSION, Identifier.parse(dimension));
+        var level = player.level().getServer().getLevel(key);
+        check(level != null, "lamp placement fixture dimension loads: " + dimension);
+        player.teleportTo(level, 4.5, 8, 6.5, Set.of(), 0, 0, false);
+        BlockPos target = new BlockPos(4, 8, 4);
+        level.setBlockAndUpdate(
+            target.below(), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        for (var entry : StormContent.LAMPS.entrySet()) {
+          var lamp = entry.getValue();
+          boolean allowed =
+              dimension.equals("storm_test:nightmare") || metal.contains(entry.getKey());
+          check(
+              LampPlacementRules.canPlace(key, lamp) == allowed,
+              "placement policy " + dimension + " " + entry.getKey());
+          level.setBlockAndUpdate(
+              target, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+          var stack = new ItemStack(lamp.asItem());
+          player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, stack);
+          var hit =
+              new net.minecraft.world.phys.BlockHitResult(
+                  Vec3.atCenterOf(target), net.minecraft.core.Direction.UP, target, false);
+          var context =
+              new net.minecraft.world.item.context.BlockPlaceContext(
+                  player, net.minecraft.world.InteractionHand.MAIN_HAND, stack, hit);
+          if (stack.getItem() instanceof BlockItem item) {
+            int before = stack.getCount();
+            var result = item.place(context);
+            check(
+                result.consumesAction() == allowed,
+                "actual block item placement " + dimension + " " + entry.getKey());
+            check(
+                level.getBlockState(target).is(lamp) == allowed,
+                "placement changes block only when permitted");
+            check(
+                stack.getCount() == (allowed ? before - 1 : before),
+                "rejected lamp placement preserves item count");
+          } else if (!allowed)
+            check(
+                lamp.getStateForPlacement(context) == null,
+                "unregistered white-paper item cannot bypass block placement policy");
+        }
+        // Existing non-metal lamps are retained; the restriction is only on new placement.
+        var existing = StormContent.LAMPS.get("deathbear_lantern").defaultBlockState();
+        level.setBlockAndUpdate(target, existing);
+        level.updateNeighborsAt(target.below(), net.minecraft.world.level.block.Blocks.STONE);
+        check(
+            level.getBlockState(target).is(existing.getBlock()),
+            "existing commemorative lantern remains in " + dimension);
+      }
+      var other =
+          net.minecraft.resources.ResourceKey.create(
+              net.minecraft.core.registries.Registries.DIMENSION,
+              Identifier.parse("mirrortree:other"));
+      for (var lamp : StormContent.LAMPS.values()) {
+        check(
+            LampPlacementRules.canPlace(Level.OVERWORLD, lamp),
+            "overworld allows existing lamp selection");
+        check(
+            LampPlacementRules.canPlace(other, lamp), "other MirrorTree dimensions are unaffected");
+      }
+    } finally {
+      player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, originalHand);
     }
   }
 }
