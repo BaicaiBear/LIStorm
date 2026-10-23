@@ -1,0 +1,336 @@
+package top.bearcabbage.lanterninstorm.test;
+
+import java.util.*;
+import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
+import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
+import net.fabricmc.fabric.api.client.gametest.v1.world.TestWorldSave;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.entity.*;
+import net.minecraft.world.item.*;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
+import top.bearcabbage.annoyingeffects.AnnoyingEffects;
+import top.bearcabbage.lanterninstorm.*;
+import top.bearcabbage.lanterninstorm.content.*;
+import top.bearcabbage.lanterninstorm.progression.*;
+import top.bearcabbage.lanterninstorm.safety.*;
+
+public final class StormGameTest implements FabricClientGameTest {
+  private static void check(boolean value, String message) {
+    if (!value) throw new AssertionError(message);
+  }
+
+  @Override
+  public void runTest(ClientGameTestContext context) {
+    check(ProgressionService.experience("food", 1, 1) == 11, "first food XP");
+    check(ProgressionService.experience("food", 10, 1) == 2, "tenth food XP");
+    check(ProgressionService.experience("food", 11, 1) == 1, "repeat food XP floor");
+    check(
+        ProgressionService.experience("ore", 1, 1) == 10
+            && ProgressionService.experience("ore", 50, 1) == 1,
+        "ore XP decay");
+    check(
+        ProgressionService.experience("biome", 1, 1) == 30
+            && ProgressionService.experience("biome", 2, 1) == 0,
+        "biome XP once");
+    check(ProgressionService.experience("advancement", 1, 5) == 50, "challenge XP");
+    TestWorldSave save;
+    try (var world = context.worldBuilder().create()) {
+      save = world.getWorldSave();
+      world
+          .getServer()
+          .runOnServer(
+              server -> {
+                LanternInStormAPI.addSafeWorld(Level.OVERWORLD);
+                var player = server.getPlayerList().getPlayers().getFirst();
+                var level = player.level();
+                check(StormContent.LAMPS.size() == 34, "all 34 lamps registered");
+                var loader = net.fabricmc.loader.api.FabricLoader.getInstance();
+                for (String recipe :
+                    List.of(
+                        "talisman",
+                        "lantern_core",
+                        "flashlight",
+                        "oak_wooden_lantern",
+                        "fir_wooden_lantern",
+                        "midas_gold_lantern")) {
+                  boolean present =
+                      server
+                          .getRecipeManager()
+                          .byKey(
+                              net.minecraft.resources.ResourceKey.create(
+                                  net.minecraft.core.registries.Registries.RECIPE,
+                                  StormContent.id(recipe)))
+                          .isPresent();
+                  boolean expected =
+                      recipe.equals("fir_wooden_lantern")
+                          ? loader.isModLoaded("biomesoplenty")
+                          : recipe.equals("midas_gold_lantern")
+                              ? loader.isModLoaded("mythicmetals")
+                              : true;
+                  check(present == expected, "recipe loading conditions: " + recipe);
+                }
+                BlockPos pos = player.blockPosition().offset(3, 0, 0);
+                var lamp = StormContent.LAMPS.get("oak_wooden_lantern");
+                level.setBlockAndUpdate(
+                    pos, lamp.defaultBlockState().setValue(SpiritLanternBlock.STARTUP, true));
+                check(
+                    LanternIndex.isSafe(level, Vec3.atCenterOf(pos).add(8, 8, 8)),
+                    "inclusive cubic safe boundary");
+                check(
+                    !LanternIndex.isSafe(level, Vec3.atCenterOf(pos).add(8.01, 0, 0)),
+                    "outside safe boundary");
+                level.setBlockAndUpdate(pos, lamp.defaultBlockState());
+                check(!LanternIndex.isSafe(level, Vec3.atCenterOf(pos)), "unlit lamp unsafe");
+                LanternIndex.unload(level, level.getChunkAt(pos));
+                LanternIndex.load(level, level.getChunkAt(pos));
+                level.setBlockAndUpdate(
+                    pos, lamp.defaultBlockState().setValue(SpiritLanternBlock.STARTUP, true));
+                check(
+                    LanternIndex.isSafe(level, Vec3.atCenterOf(pos)),
+                    "chunk reload restores index");
+                var experience =
+                    net.puffish.skillsmod.api.SkillsAPI.getCategory(
+                            Identifier.fromNamespaceAndPath("storm_test", "integration"))
+                        .orElseThrow()
+                        .getExperience()
+                        .orElseThrow();
+                int before = experience.getTotal(player);
+                var state = PlayerStore.get(player);
+                ProgressionService.award(player, "food", "test:food", 1);
+                ProgressionService.award(player, "food", "test:food", 1);
+                check(state.count("food", "test:food") == 2, "repeat food counter");
+                ProgressionService.award(player, "biome", "test:biome", 1);
+                ProgressionService.award(player, "biome", "test:biome", 1);
+                check(state.count("biome", "test:biome") == 1, "biome deduplication");
+                check(
+                    experience.getTotal(player) - before == 47,
+                    "food and biome XP reach actual Pufferfish category exactly once");
+                new ItemStack(Items.APPLE).finishUsingItem(level, player);
+                check(
+                    state.count("food", "minecraft:apple") == 1,
+                    "vanilla consumption event awards once");
+                if (net.fabricmc.loader.api.FabricLoader.getInstance()
+                    .isModLoaded("farmersdelight")) {
+                  try {
+                    var pie =
+                        BuiltInRegistries.BLOCK.getValue(
+                            Identifier.parse("farmersdelight:apple_pie"));
+                    var piePos = pos.offset(0, 0, 5);
+                    level.setBlockAndUpdate(
+                        piePos.below(),
+                        net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+                    level.setBlockAndUpdate(piePos, pie.defaultBlockState());
+                    player.getFoodData().setFoodLevel(10);
+                    var consume =
+                        pie.getClass()
+                            .getDeclaredMethod(
+                                "consumeBite",
+                                Level.class,
+                                BlockPos.class,
+                                net.minecraft.world.level.block.state.BlockState.class,
+                                net.minecraft.world.entity.player.Player.class);
+                    consume.setAccessible(true);
+                    consume.invoke(pie, level, piePos, pie.defaultBlockState(), player);
+                    check(
+                        state.count("food", "farmersdelight:apple_pie_slice") == 1,
+                        "Farmer's Delight pie awards exactly once through food component");
+                  } catch (ReflectiveOperationException e) {
+                    throw new AssertionError("Farmer's Delight fixture failed", e);
+                  }
+                }
+                for (String advancementType : List.of("goal", "challenge")) {
+                  var entry =
+                      server
+                          .getAdvancements()
+                          .get(Identifier.parse("minecraft:storm_test_" + advancementType));
+                  check(entry != null, "test advancement loaded");
+                  int prior = experience.getTotal(player);
+                  player.getAdvancements().award(entry, "done");
+                  player.getAdvancements().award(entry, "done");
+                  check(
+                      experience.getTotal(player) - prior
+                          == (advancementType.equals("goal") ? 10 : 50),
+                      "advancement event awards exactly once");
+                }
+                var orePos = pos.offset(0, 0, -2);
+                level.setBlockAndUpdate(
+                    orePos, net.minecraft.world.level.block.Blocks.COAL_ORE.defaultBlockState());
+                check(player.gameMode.destroyBlock(orePos), "ore broken through game mode");
+                check(state.count("ore", "minecraft:coal_ore") == 1, "ore break event tracked");
+                var attachment = eu.pb4.trinkets.api.TrinketsApi.getAttachment(player);
+                var glove = attachment.getSlotAccess("offhand/glove", 0);
+                check(glove.isValid(), "offhand glove slot available");
+                var flashlight = new ItemStack(StormContent.FLASHLIGHT);
+                flashlight.setDamageValue(100);
+                check(glove.set(flashlight), "flashlight equips in glove slot");
+                check(
+                    DefenseEquipment.find(player).stack() == flashlight,
+                    "equipped flashlight selected");
+                player.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+                player.teleportTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                state.tick = 19;
+                state.graceTicks = 0;
+                SafetyService.tick(player);
+                check(flashlight.getDamageValue() == 80, "safe lamp charges flashlight by twenty");
+                level.setBlockAndUpdate(pos, lamp.defaultBlockState());
+                LanternInStormAPI.safeWorlds.clear();
+                player.addEffect(
+                    new MobEffectInstance(net.minecraft.world.effect.MobEffects.POISON, 200));
+                state.tick = 19;
+                state.cleared = false;
+                SafetyService.tick(player);
+                check(
+                    flashlight.getDamageValue() == 80,
+                    "vanilla dimension flashlight costs no charge");
+                check(
+                    !player.hasEffect(net.minecraft.world.effect.MobEffects.POISON),
+                    "flashlight removes harmful effect");
+                glove.set(ItemStack.EMPTY);
+                state.tick = 19;
+                SafetyService.tick(player);
+                check(
+                    player.hasEffect(AnnoyingEffects.TANGLING_DREAMS),
+                    "unsafe and unequipped triggers dreams");
+                player.removeAllEffects();
+                var nightmareKey =
+                    net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION,
+                        Identifier.parse("storm_test:nightmare"));
+                var nightmare = server.getLevel(nightmareKey);
+                check(nightmare != null, "custom nightmare dimension loads");
+                player.teleportTo(nightmare, 0.5, 5, 0.5, Set.of(), 0, 0, false);
+                state.tick = 19;
+                state.graceTicks = 0;
+                state.cleared = true;
+                SafetyService.tick(player);
+                check(
+                    player.hasEffect(AnnoyingEffects.TANGLING_NIGHTMARE),
+                    "custom dimension unequipped triggers strong nightmare");
+                player.removeAllEffects();
+                glove.set(flashlight);
+                state.tick = 19;
+                state.cleared = true;
+                SafetyService.tick(player);
+                check(
+                    flashlight.getDamageValue() == 81,
+                    "custom dimension flashlight consumes charge");
+                flashlight.setDamageValue(flashlight.getMaxDamage() - 1);
+                state.tick = 19;
+                SafetyService.tick(player);
+                check(!flashlight.isEmpty(), "exhausted flashlight retained for recharge");
+                check(
+                    player.hasEffect(AnnoyingEffects.TANGLING_DREAMS),
+                    "exhausted flashlight permits weak nightmare");
+                player.removeAllEffects();
+                glove.set(ItemStack.EMPTY);
+                player.teleportTo(
+                    level,
+                    pos.getX() + 0.5,
+                    pos.getY() + 0.5,
+                    pos.getZ() + 0.5,
+                    Set.of(),
+                    0,
+                    0,
+                    false);
+                LanternInStormAPI.addSafeWorld(Level.OVERWORLD);
+                player.setGameMode(net.minecraft.world.level.GameType.CREATIVE);
+                level.setBlockAndUpdate(
+                    pos, lamp.defaultBlockState().setValue(SpiritLanternBlock.STARTUP, true));
+                LanternInStormAPI.setRTPSpawn(player, pos, false);
+                PlayerStore.save(player);
+                check(state.spawn[0] == pos.getX(), "origin saved");
+                var respawn =
+                    player.findRespawnPositionAndUseSpawnBlock(
+                        false, net.minecraft.world.level.portal.TeleportTransition.DO_NOTHING);
+                check(
+                    respawn.position().equals(Vec3.atCenterOf(pos)),
+                    "missing bed falls back to original lantern spawn");
+                player.getInventory().add(new ItemStack(StormContent.FLASHLIGHT));
+                // Every effect callback executes against a real server entity and world.
+                var pig = EntityType.PIG.create(level, EntitySpawnReason.COMMAND);
+                check(pig != null, "test entity created");
+                pig.setPos(player.position().add(100, 4, 100));
+                level.addFreshEntity(pig);
+                int effects = 0;
+                for (var entry : BuiltInRegistries.MOB_EFFECT.entrySet())
+                  if (entry.getKey().identifier().getNamespace().equals("annoyingeffects")) {
+                    entry.getValue().applyEffectTick(level, pig, 0);
+                    effects++;
+                  }
+                check(effects == 35, "all 35 effect callbacks execute");
+                pig.discard();
+                top.bearcabbage.annoyingeffects.effect.TanglingNightmareStatusEffect.AnnoyingBar
+                    .set(player, 1.0);
+                AnnoyingEffects.TANGLING_NIGHTMARE.value().applyEffectTick(level, player, 0);
+                check(
+                    ((top.bearcabbage.annoyingeffects.StatusEffectInstanceStackHolder) player)
+                            .popStatusEffect()
+                        != null,
+                    "full nightmare buildup queues eligible effect");
+                player.addEffect(new MobEffectInstance(AnnoyingEffects.CONTROLS_CRAB, 80));
+                top.bearcabbage.lanterninstorm.network.StormNetworking.bar(player, true, 3);
+                BeginningLanternEntity.create(level, pos.offset(0, 1, 2), "起点灯测试", true);
+              });
+      context.waitTicks(10);
+      world.getClientLevel().waitForChunksRender();
+      context.runOnClient(
+          client -> {
+            check(
+                client.player != null && client.player.hasEffect(AnnoyingEffects.CONTROLS_CRAB),
+                "effect synchronized to client");
+            check(client.level != null, "client level loaded");
+            var player = client.player;
+            var oldInput = player.input;
+            try {
+              player.input =
+                  new net.minecraft.client.player.ClientInput() {
+                    @Override
+                    public net.minecraft.world.phys.Vec2 getMoveVector() {
+                      return new net.minecraft.world.phys.Vec2(.5F, .5F);
+                    }
+                  };
+              player.addEffect(new MobEffectInstance(AnnoyingEffects.CONTROLS_MIRROR, 80));
+              player.addEffect(new MobEffectInstance(AnnoyingEffects.CONTROLS_ALWAYS_JUMP, 80));
+              player.applyInput();
+              check(
+                  player.zza == 0 && player.xxa < 0,
+                  "client crab and mirror input modify movement");
+              check(player.isJumping(), "client automatic jump");
+              player.addEffect(new MobEffectInstance(AnnoyingEffects.REALLY_COLD, 80));
+              player.applyInput();
+              check(!player.isJumping(), "cold suppresses automatic jump");
+              player.removeEffect(AnnoyingEffects.CONTROLS_MIRROR);
+              player.removeEffect(AnnoyingEffects.CONTROLS_ALWAYS_JUMP);
+              player.removeEffect(AnnoyingEffects.REALLY_COLD);
+            } finally {
+              player.input = oldInput;
+            }
+          });
+      context.takeScreenshot("storm-lamps-and-hud");
+      world
+          .getServer()
+          .runOnServer(
+              server -> {
+                var p = server.getPlayerList().getPlayers().getFirst();
+                p.removeAllEffects();
+                PlayerStore.save(p);
+              });
+    }
+    try (var world = save.open()) {
+      world
+          .getServer()
+          .runOnServer(
+              server -> {
+                var p = server.getPlayerList().getPlayers().getFirst();
+                var state = PlayerStore.get(p);
+                check(state.count("food", "test:food") == 2, "food progress survives restart");
+                check(state.count("biome", "test:biome") == 1, "biome progress survives restart");
+                check(state.spawn != null, "origin survives restart");
+              });
+    }
+  }
+}
