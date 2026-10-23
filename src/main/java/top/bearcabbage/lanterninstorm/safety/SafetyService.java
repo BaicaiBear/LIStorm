@@ -2,6 +2,7 @@ package top.bearcabbage.lanterninstorm.safety;
 
 import java.util.ArrayList;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.item.ItemStack;
@@ -13,6 +14,9 @@ import top.bearcabbage.lanterninstorm.network.StormNetworking;
 import top.bearcabbage.lanterninstorm.progression.PlayerStore;
 
 public final class SafetyService {
+  private static final Identifier BEDROOM =
+      Identifier.fromNamespaceAndPath("mirrortree", "bedroom");
+
   public static void tick(ServerPlayer player) {
     var state = PlayerStore.get(player);
     if (state.graceTicks > 0) state.graceTicks--;
@@ -28,7 +32,8 @@ public final class SafetyService {
                     new BlockPos(state.spawn[0], state.spawn[1], state.spawn[2])),
                 16);
     boolean safe =
-        nearLamp
+        player.level().dimension().identifier().equals(BEDROOM)
+            || nearLamp
             || nearSpawn
             || state.graceTicks > 0
             || LanternInStormAPI.safeWorlds.contains(player.level().dimension());

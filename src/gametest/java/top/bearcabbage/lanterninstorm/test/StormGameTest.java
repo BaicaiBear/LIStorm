@@ -227,8 +227,7 @@ public final class StormGameTest implements FabricClientGameTest {
                     "exhausted flashlight permits weak nightmare");
                 var dreams = player.getEffect(AnnoyingEffects.TANGLING_DREAMS);
                 player.addEffect(
-                    new MobEffectInstance(
-                        net.minecraft.world.effect.MobEffects.SLOWNESS, 200));
+                    new MobEffectInstance(net.minecraft.world.effect.MobEffects.SLOWNESS, 200));
                 state.cleared = false;
                 for (int second = 0; second < 5; second++) {
                   state.tick = 19;
@@ -265,6 +264,7 @@ public final class StormGameTest implements FabricClientGameTest {
                 check(
                     !player.hasEffect(net.minecraft.world.effect.MobEffects.POISON),
                     "vanilla exhausted doll keeps free cleansing");
+                verifyBedroomSafety(player);
                 verifyLampPlacement(player);
                 player.removeAllEffects();
                 glove.set(ItemStack.EMPTY);
@@ -447,5 +447,65 @@ public final class StormGameTest implements FabricClientGameTest {
     } finally {
       player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, originalHand);
     }
+  }
+
+  private static void verifyBedroomSafety(net.minecraft.server.level.ServerPlayer player) {
+    var server = player.level().getServer();
+    var bedroom =
+        server.getLevel(
+            net.minecraft.resources.ResourceKey.create(
+                net.minecraft.core.registries.Registries.DIMENSION,
+                Identifier.parse("mirrortree:bedroom")));
+    check(bedroom != null, "bedroom safety fixture loads");
+    LanternInStormAPI.safeWorlds.clear();
+    player.teleportTo(bedroom, 100.5, 8, 100.5, Set.of(), 0, 0, false);
+    var state = PlayerStore.get(player);
+    state.graceTicks = 0;
+    state.safe = false;
+    state.tick = 19;
+    var glove =
+        eu.pb4.trinkets.api.TrinketsApi.getAttachment(player).getSlotAccess("offhand/glove", 0);
+    glove.set(ItemStack.EMPTY);
+    player.addEffect(new MobEffectInstance(AnnoyingEffects.TANGLING_NIGHTMARE, 200));
+    player.addEffect(new MobEffectInstance(AnnoyingEffects.TANGLING_DREAMS, 200));
+    var bar = top.bearcabbage.annoyingeffects.effect.TanglingNightmareStatusEffect.AnnoyingBar;
+    bar.set(player, .75);
+    SafetyService.tick(player);
+    check(state.safe, "bedroom is safe without lamp, origin, grace period or API registration");
+    check(
+        !player.hasEffect(AnnoyingEffects.TANGLING_NIGHTMARE)
+            && !player.hasEffect(AnnoyingEffects.TANGLING_DREAMS),
+        "entering bedroom clears both nightmare types");
+    check(bar.get(player) == 0, "bedroom resets nightmare buildup");
+    for (var item : List.of(StormContent.FLASHLIGHT, StormContent.TALISMAN)) {
+      var stack = new ItemStack(item);
+      stack.setDamageValue(50);
+      glove.set(stack);
+      for (int second = 0; second < 5; second++) {
+        state.tick = 19;
+        SafetyService.tick(player);
+      }
+      check(
+          state.safe && stack.getDamageValue() == 50,
+          "bedroom safety does not consume defense durability");
+      check(
+          !player.hasEffect(AnnoyingEffects.TANGLING_NIGHTMARE)
+              && !player.hasEffect(AnnoyingEffects.TANGLING_DREAMS),
+          "bedroom never applies ambient nightmares");
+    }
+    glove.set(ItemStack.EMPTY);
+    var stars =
+        server.getLevel(
+            net.minecraft.resources.ResourceKey.create(
+                net.minecraft.core.registries.Registries.DIMENSION,
+                Identifier.parse("starryskies:placement_test")));
+    check(stars != null, "starryskies fixture loads");
+    player.teleportTo(stars, 100.5, 8, 100.5, Set.of(), 0, 0, false);
+    state.tick = 19;
+    SafetyService.tick(player);
+    check(
+        !state.safe && player.hasEffect(AnnoyingEffects.TANGLING_NIGHTMARE),
+        "leaving bedroom for starryskies restores ordinary nightmare rules");
+    player.removeAllEffects();
   }
 }
